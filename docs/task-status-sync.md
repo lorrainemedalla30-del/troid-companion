@@ -31,22 +31,96 @@ create policy "Troid Companion can insert status updates"
   with check (true);
 ```
 
-Your own system should read the table with a **secret key** (`sb_secret_...`) or the
-legacy **service role key** (server
-side only, never in an app), which bypasses these policies.
+Your own system should read the table with a **secret key** (`sb_secret_...`, or
+the legacy service role key). Use it on your server only, never in an app; it
+bypasses these policies.
 
-## 2. Get notified of new updates
+## 2. Get the updates into your system
 
-Pick one:
+### Option A (recommended): read the table
 
-- **Database Webhook** (simplest): Supabase → Database → Webhooks → *Create*,
-  table `task_status_updates`, event **Insert**, and the URL of an endpoint in
-  your system. Supabase POSTs each new row to it as JSON.
-- **Realtime**: run
-  `alter publication supabase_realtime add table public.task_status_updates;`
-  then subscribe from your system (with a secret or service role key) to `INSERT`
-  events on that table.
-- **Polling**: query rows `where received_at > <last check>` on a schedule.
+Your system reads new rows from Supabase. Nothing extra to set up in Supabase,
+and nothing is missed if your system is down for a while: the updates wait in
+the table.
+
+You need, from Supabase → Project Settings → API Keys:
+
+- the project URL: `https://terkfuubjjbelwcqpish.supabase.co`
+- a **secret key** (`sb_secret_...`). Create one just for your system so it can
+  be revoked on its own. Keep it on your server only.
+
+**Over plain HTTPS** (any language):
+
+```bash
+curl "https://terkfuubjjbelwcqpish.supabase.co/rest/v1/task_status_updates?select=*&order=received_at.asc&received_at=gt.2026-10-11T00:00:00Z" \
+  -H "apikey: sb_secret_..."
+```
+
+Returns a JSON array of rows newer than the given time.
+
+**With JavaScript / Node** (`npm install @supabase/supabase-js`):
+
+```js
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient('https://terkfuubjjbelwcqpish.supabase.co', process.env.SUPABASE_SECRET_KEY);
+
+const { data, error } = await supabase
+  .from('task_status_updates')
+  .select('*')
+  .gt('received_at', lastCheckedAt)   // ISO time of your previous check
+  .order('received_at', { ascending: true });
+```
+
+**Checking regularly (polling):** run the query on a schedule (e.g. every
+minute) and remember the newest `received_at` you have processed. Rows that
+arrive at almost the same moment can appear slightly out of order, so query
+from a minute before that time and skip any `id` you already have.
+
+**Instantly instead of polling (Realtime):** run once in the SQL Editor:
+
+```sql
+alter publication supabase_realtime add table public.task_status_updates;
+```
+
+then subscribe from your server:
+
+```js
+supabase
+  .channel('task-status')
+  .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'task_status_updates' },
+      payload => saveToYourSystem(payload.new))
+  .subscribe();
+```
+
+Realtime only delivers rows while your system is connected, so also run the
+polling query on startup to catch anything missed.
+
+**Times** (`created_at`, `received_at`) are stored in UTC. Convert to Philippine
+time (UTC+8) when displaying them.
+
+### Option B: email / SMS alerts
+
+A Supabase Edge Function sends a message to staff for each new update. Not set
+up yet; ask the app team.
+
+### Option C: webhook (push to your system's URL)
+
+Use this only if your system must receive each update the instant it arrives
+and cannot read from Supabase. Supabase → Integrations (or Database) →
+**Database Webhooks** → *Create a new hook*: table `task_status_updates`, event
+**Insert**, method **POST**, your endpoint's URL, and a header such as
+`Authorization: Bearer <shared secret>` that your endpoint checks. Supabase
+POSTs each new row as JSON:
+
+```json
+{ "type": "INSERT", "table": "task_status_updates", "schema": "public",
+  "record": { "id": "…", "status": "completed", "notes": "…", "operator_email": "…",
+              "created_at": "…", "received_at": "…" },
+  "old_record": null }
+```
+
+Your endpoint should reply with a 2xx status quickly.
 
 ## 3. Configure the app
 
