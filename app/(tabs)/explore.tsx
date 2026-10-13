@@ -12,7 +12,6 @@ import {
 } from 'react-native';
 import * as Network from 'expo-network';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { useIsLandscape } from '@/hooks/use-is-landscape';
 import UserManual from '@/components/UserManual';
@@ -51,7 +50,6 @@ const s = scaleSize;
 const f = fontScale;
 
 export default function AquaBotDashboard() {
-  const router = useRouter();
   const { logout } = useAuth();
   const insets = useSafeAreaInsets();
   const isLandscape = useIsLandscape();
@@ -101,10 +99,10 @@ export default function AquaBotDashboard() {
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Yes',
-        onPress: async () => {
+        onPress: () => {
           setActiveTab('connection');
-          await logout();
-          router.replace('/loginpage');
+          // The root layout's protected routes switch to the login page.
+          logout();
         },
       },
     ]);
