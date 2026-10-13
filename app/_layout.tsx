@@ -2,6 +2,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 import { useEffect, useState } from 'react';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
@@ -46,11 +47,14 @@ export default function RootLayout() {
   const colorScheme = useColorScheme();
 
   return (
-    <AuthProvider>
-      <TaskSyncProvider>
-        <RootLayoutNav />
-      </TaskSyncProvider>
-      <StatusBar style="light" />
-    </AuthProvider>
+    // Needed for gesture-handler, which the drive pads use for multi-touch.
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <AuthProvider>
+        <TaskSyncProvider>
+          <RootLayoutNav />
+        </TaskSyncProvider>
+        <StatusBar style="light" />
+      </AuthProvider>
+    </GestureHandlerRootView>
   );
 }

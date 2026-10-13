@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, Alert, KeyboardAvoidingView, ScrollView, Platform } from 'react-native';
+import { View, Text, TextInput, Pressable, StyleSheet, Alert, KeyboardAvoidingView, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsLandscape } from '@/hooks/use-is-landscape';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -51,7 +51,9 @@ export default function LoginScreen() {
 
   return (
     <LinearGradient colors={[COLORS.bg, '#2a3a8c', '#1e2875']} style={StyleSheet.absoluteFill}>
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      {/* Android draws edge-to-edge, so it no longer shrinks the screen for the keyboard; padding
+          lifts the form above it ('height' made the screen flicker on Android). */}
+      <KeyboardAvoidingView style={styles.flex} behavior="padding">
         <ScrollView
           contentContainerStyle={[
             styles.container,
