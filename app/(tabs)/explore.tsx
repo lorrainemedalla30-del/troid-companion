@@ -96,9 +96,9 @@ export default function AquaBotDashboard() {
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Yes',
-        onPress: () => {
+        onPress: async () => {
           setActiveTab('connection');
-          logout();
+          await logout();
           router.replace('/loginpage');
         },
       },

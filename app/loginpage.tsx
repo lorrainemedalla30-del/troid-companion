@@ -4,8 +4,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsLandscape } from '@/hooks/use-is-landscape';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Svg, Circle, Path, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
-import { useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
+import { ApiError } from '@/utils/troid-api';
 
 const COLORS = {
   primary: '#22228c',
@@ -26,28 +26,37 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const router = useRouter();
-  const { login } = useAuth();
+  const [error, setError] = useState<string | null>(null);
+  const { login, isRestoring, signOutNotice } = useAuth();
   const insets = useSafeAreaInsets();
   const isLandscape = useIsLandscape();
 
+  // Only operator accounts created by an admin in the TROID system can sign in;
+  // the root layout moves on to the app (or the change-password screen) once signed in.
   const handleLogin = async () => {
-    if (!email.trim() || !password.trim()) {
-      Alert.alert('Error', 'Please enter both email and password');
+    if (!email.trim() || !password) {
+      setError('Please enter both email and password.');
       return;
     }
 
     setIsLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 800));
-
-    if (password.length >= 4) {
-      login(email);
-      router.replace('/(tabs)');
-    } else {
-      Alert.alert('Invalid Credentials', 'Password must be at least 4 characters');
+    setError(null);
+    try {
+      await login(email, password);
+      setPassword('');
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Something went wrong. Please try again.');
+    } finally {
       setIsLoading(false);
     }
   };
+
+  // Keeps the form hidden for the moment the saved session takes to load.
+  if (isRestoring) {
+    return <LinearGradient colors={[COLORS.bg, '#2a3a8c', '#1e2875']} style={StyleSheet.absoluteFill} />;
+  }
+
+  const message = error ?? signOutNotice;
 
   return (
     <LinearGradient colors={[COLORS.bg, '#2a3a8c', '#1e2875']} style={StyleSheet.absoluteFill}>
@@ -107,6 +116,8 @@ export default function LoginScreen() {
                   />
                 </View>
 
+                {message && <Text style={styles.error}>{message}</Text>}
+
                 <Pressable
                   style={[styles.button, isLoading && styles.buttonDisabled]}
                   onPress={handleLogin}
@@ -116,7 +127,14 @@ export default function LoginScreen() {
                 </Pressable>
               </View>
 
-              <Pressable onPress={() => Alert.alert('Reset', 'Password reset flow')}>
+              <Pressable
+                onPress={() =>
+                  Alert.alert(
+                    'Forgot password?',
+                    'Ask your CENRO admin to reset your password. You will get a temporary password by email.'
+                  )
+                }
+              >
                 <Text style={styles.forgotPassword}>Forgot password?</Text>
               </Pressable>
             </View>
@@ -248,6 +266,11 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.7,
+  },
+  error: {
+    color: COLORS.sealRed,
+    fontSize: 12.5,
+    fontWeight: '600',
   },
   buttonText: {
     color: '#fff',

@@ -16,27 +16,32 @@ function RootLayoutNav() {
   const [isMounted, setIsMounted] = useState(false);
   const segments = useSegments();
   const router = useRouter();
-  const { isAuthenticated } = useAuth();
+  const { isRestoring, isAuthenticated, mustChangePassword } = useAuth();
 
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
   useEffect(() => {
-    if (!isMounted) return;
+    // Wait for the saved session, so a signed-in operator isn't bounced to the login page.
+    if (!isMounted || isRestoring) return;
 
-    const inAuthGroup = segments[0] === 'loginpage';
+    const onLogin = segments[0] === 'loginpage';
+    const onChangePassword = segments[0] === 'change-password';
 
-    if (!isAuthenticated && !inAuthGroup) {
-      router.replace('/loginpage');
-    } else if (isAuthenticated && inAuthGroup) {
+    if (!isAuthenticated) {
+      if (!onLogin) router.replace('/loginpage');
+    } else if (mustChangePassword) {
+      if (!onChangePassword) router.replace('/change-password');
+    } else if (onLogin || onChangePassword) {
       router.replace('/(tabs)');
     }
-  }, [isMounted, segments, isAuthenticated, router]);
+  }, [isMounted, isRestoring, segments, isAuthenticated, mustChangePassword, router]);
 
   return (
     <Stack initialRouteName="loginpage">
       <Stack.Screen name="loginpage" options={{ headerShown: false }} />
+      <Stack.Screen name="change-password" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
     </Stack>
