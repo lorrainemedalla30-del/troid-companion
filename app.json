@@ -11,8 +11,11 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSLocalNetworkUsageDescription": "Troid Companion uses the local network to join Wi-Fi networks.",
-        "NSLocationWhenInUseUsageDescription": "iOS requires location access to read the name of the Wi-Fi network you are connected to."
+        "NSLocalNetworkUsageDescription": "Troid Companion uses the local network to join Wi-Fi networks and show the ROV camera feed.",
+        "NSLocationWhenInUseUsageDescription": "iOS requires location access to read the name of the Wi-Fi network you are connected to.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
       }
     },
     "android": {
@@ -47,7 +50,15 @@
       "expo-image",
       "expo-status-bar",
       "expo-web-browser",
-      "react-native-wifi-reborn"
+      "react-native-wifi-reborn",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

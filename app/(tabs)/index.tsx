@@ -1,11 +1,14 @@
 import NetworkConnectionModal from '@/components/NetworkConnectionModal';
+import VideoFeed from '@/components/VideoFeed';
 import { useConnectionQuality, type SignalBars } from '@/hooks/use-connection-quality';
+import { useDriveLink, type DriveDirection } from '@/hooks/use-drive-link';
 import { fontScale, scaleSize } from '@/utils/scale';
 import * as Network from 'expo-network';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Battery, ChevronsDown, ChevronsUp, Navigation, Radio, Settings, Wifi, WifiHigh, WifiLow, WifiOff, WifiZero } from 'lucide-react-native';
+import { Battery, ChevronsDown, ChevronsUp, Radio, Settings, Wifi, WifiHigh, WifiLow, WifiOff, WifiZero } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
-import { LayoutChangeEvent, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { LayoutChangeEvent, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const COLORS = {
@@ -31,17 +34,13 @@ const f = fontScale;
 
 const DRIVE_PAD_GAP = s(8);
 
-type DriveDirection = 'forward' | 'backward' | 'stop';
-
 type TelemetryReadings = {
   battery: number | null;
-  heading: number | null;
 };
 
 // No data source is connected yet, so every reading shows "--".
 const NO_TELEMETRY: TelemetryReadings = {
   battery: null,
-  heading: null,
 };
 
 /** Formats a telemetry value, or "--" if there is no reading. */
@@ -56,6 +55,8 @@ export default function ROVControlUI() {
   // Tank-style drive: each side's pad controls its own thruster/track.
   const [leftDrive, setLeftDrive] = useState<DriveDirection>('stop');
   const [rightDrive, setRightDrive] = useState<DriveDirection>('stop');
+  // Sends both sides to the Pi, which drives the motors.
+  useDriveLink(leftDrive, rightDrive);
   const [wifiPanelOpen, setWifiPanelOpen] = useState(false);
   // "Connected" means the phone (and so the app) is online, through Wi-Fi or mobile data.
   const networkState = Network.useNetworkState();
@@ -111,8 +112,8 @@ export default function ROVControlUI() {
 
   const batteryLow = battery != null && battery <= 20;
 
-  // Each pad is a Forward button stacked on a Backward button, with the compass
-  // sitting between the two pads in one row at the bottom of the screen.
+  // Each pad is a Forward button stacked on a Backward button, one pad at each
+  // side of the bottom of the screen.
   const usableWidth = width - insets.left - insets.right;
   const sideColumnWidth = s(156);
   const driveButtonHeight = Math.round(
@@ -120,18 +121,11 @@ export default function ROVControlUI() {
       ? Math.max(s(44), Math.min(s(80), (bodyHeight - DRIVE_PAD_GAP) / 2))
       : Math.max(s(44), Math.min(s(72), bodyHeight * 0.13))
   );
-  const padHeight = driveButtonHeight * 2 + DRIVE_PAD_GAP;
-  const compassSize = Math.round(Math.min(isLandscape ? s(140) : s(110), padHeight));
   const padWidth = isLandscape
     ? sideColumnWidth
-    : Math.min(s(160), (usableWidth - compassSize - s(24)) / 2);
+    : Math.min(s(160), (usableWidth - s(24)) / 2);
 
   const onBodyLayout = (e: LayoutChangeEvent) => setBodyHeight(e.nativeEvent.layout.height);
-
-
-
-  const compass = <Compass size={compassSize} heading={telemetry.heading} />;
-
 
   const leftPad = (
     <DrivePad width={padWidth} buttonHeight={driveButtonHeight} stacked={!isLandscape} direction={leftDrive} onChange={d => handleDrive('left', d)} />
@@ -150,6 +144,15 @@ export default function ROVControlUI() {
             <LinearGradient colors={['rgba(34,211,238,0.2)', 'transparent', 'rgba(0,0,0,0.6)']} style={ABSOLUTE_FILL} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} />
           </LinearGradient>
         </View>
+
+        {/* Live camera feed from the Pi relay, behind the controls. */}
+        <VideoFeed style={ABSOLUTE_FILL} />
+        <LinearGradient
+          pointerEvents="none"
+          colors={['rgba(0,0,0,0.45)', 'transparent', 'transparent', 'rgba(0,0,0,0.55)']}
+          locations={[0, 0.2, 0.65, 1]}
+          style={ABSOLUTE_FILL}
+        />
 
         <View
           style={[
@@ -205,7 +208,6 @@ export default function ROVControlUI() {
           <View style={styles.body} onLayout={onBodyLayout}>
             <View style={styles.driveRow}>
               {leftPad}
-              {compass}
               {rightPad}
             </View>
           </View>
@@ -238,23 +240,6 @@ function WifiStrengthIcon({ bars, color }: { bars: SignalBars; color: string }) 
       <Wifi size={s(16)} color="rgba(255,255,255,0.2)" />
       <View style={StyleSheet.absoluteFill}>
         <Lit size={s(16)} color={color} />
-      </View>
-    </View>
-  );
-}
-
-function Compass({ size, heading }: { size: number; heading: number | null }) {
-  return (
-    <View style={[styles.compass, { width: size, height: size, borderRadius: size / 2 }]}>
-      <Text style={styles.compassLabel}>N</Text>
-      <Text style={styles.compassLabelS}>S</Text>
-      <Text style={styles.compassLabelW}>W</Text>
-      <Text style={styles.compassLabelE}>E</Text>
-      <View style={styles.compassCrossV} />
-      <View style={styles.compassCrossH} />
-      {/* lucide's Navigation arrow points to the upper right, so -45° makes it point north. */}
-      <View style={{ transform: [{ rotate: `${(heading ?? 0) - 45}deg` }] }}>
-        <Navigation size={s(22)} color={COLORS.emerald400} fill={COLORS.emerald400} />
       </View>
     </View>
   );
@@ -316,15 +301,45 @@ function DriveButton({
   onPressIn: () => void;
   onPressOut: () => void;
 }) {
+  // Gesture-handler tracks each finger on its own, so both pads can be held at
+  // once (React Native's Pressable only allows one touch at a time).
+  const hold =
+    Platform.OS === 'ios'
+      ? // iOS: LongPress with minDuration(0) never fires, so react to raw touches
+        // instead. Release is handled on the touch itself, not only in
+        // onFinalize, which may never come if the gesture didn't activate in
+        // time - that left the button (and the motor) stuck on.
+        Gesture.Manual()
+          .runOnJS(true)
+          .onTouchesDown((_e, manager) => {
+            manager.activate();
+            onPressIn();
+          })
+          .onTouchesUp((_e, manager) => {
+            onPressOut();
+            manager.end();
+          })
+          .onTouchesCancelled((_e, manager) => {
+            onPressOut();
+            manager.fail();
+          })
+          .onFinalize(onPressOut)
+      : // Android (and web): minDuration(0) makes LongPress a "hold" that
+        // begins on touch down and finalizes on release.
+        Gesture.LongPress()
+          .minDuration(0)
+          .maxDistance(10000)
+          .runOnJS(true)
+          .onBegin(onPressIn)
+          .onFinalize(onPressOut);
+
   return (
-    <Pressable
-      onPressIn={onPressIn}
-      onPressOut={onPressOut}
-      style={[styles.driveButton, { height }, stacked && styles.driveButtonStacked, active && styles.driveButtonActive]}
-    >
-      {icon}
-      <Text style={[styles.driveLabel, { color: active ? COLORS.sky400 : 'rgba(255,255,255,0.7)' }]}>{label}</Text>
-    </Pressable>
+    <GestureDetector gesture={hold}>
+      <View style={[styles.driveButton, { height }, stacked && styles.driveButtonStacked, active && styles.driveButtonActive]}>
+        {icon}
+        <Text style={[styles.driveLabel, { color: active ? COLORS.sky400 : 'rgba(255,255,255,0.7)' }]}>{label}</Text>
+      </View>
+    </GestureDetector>
   );
 }
 
@@ -452,50 +467,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-  },
-  compass: {
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  compassLabel: {
-    position: 'absolute',
-    top: s(4),
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: f(10),
-    fontWeight: '600',
-  },
-  compassLabelS: {
-    position: 'absolute',
-    bottom: s(4),
-    color: 'rgba(255,255,255,0.4)',
-    fontSize: f(10),
-  },
-  compassLabelW: {
-    position: 'absolute',
-    left: s(6),
-    color: 'rgba(255,255,255,0.4)',
-    fontSize: f(10),
-  },
-  compassLabelE: {
-    position: 'absolute',
-    right: s(6),
-    color: 'rgba(255,255,255,0.4)',
-    fontSize: f(10),
-  },
-  compassCrossV: {
-    position: 'absolute',
-    width: 1,
-    height: '100%',
-    backgroundColor: 'rgba(255,255,255,0.1)',
-  },
-  compassCrossH: {
-    position: 'absolute',
-    height: 1,
-    width: '100%',
-    backgroundColor: 'rgba(255,255,255,0.1)',
   },
   drivePad: {
     gap: DRIVE_PAD_GAP,

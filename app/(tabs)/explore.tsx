@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
+  KeyboardAvoidingView,
 } from 'react-native';
 import * as Network from 'expo-network';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -199,7 +200,9 @@ export default function AquaBotDashboard() {
         </View>
       </ScrollView>
 
-      <View style={styles.main}>
+      {/* Android draws edge-to-edge, so it no longer shrinks the screen for the
+          keyboard; padding lifts the content above it on both platforms. */}
+      <KeyboardAvoidingView style={styles.main} behavior="padding">
         <ScrollView
           contentContainerStyle={[
             styles.mainContent,
@@ -342,7 +345,7 @@ export default function AquaBotDashboard() {
             </View>
           )}
         </ScrollView>
-      </View>
+      </KeyboardAvoidingView>
     </View>
   );
 }
