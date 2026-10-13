@@ -1,7 +1,8 @@
 import * as Network from 'expo-network';
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import {
+  belongsTo,
   clearFailed,
   enqueueUpdate,
   flushQueue,
@@ -16,12 +17,12 @@ const RETRY_INTERVAL_MS = 30000;
 
 type TaskSyncContextType = {
   isConfigured: boolean;
-  /** Updates saved on the phone that have not reached Supabase yet. */
+  /** This operator's updates saved on the phone that have not reached the TROID system yet. */
   pending: PendingUpdate[];
-  /** Updates Supabase rejected for good; shown so the operator knows. */
+  /** This operator's updates the server rejected for good; shown so the operator knows. */
   failed: PendingUpdate[];
   lastResult: SyncResult;
-  /** When the last update was confirmed by Supabase. */
+  /** When the last update was confirmed by the server. */
   lastSentAt: Date | null;
   /** Saves the update, then tries to send it right away. */
   submitUpdate: (update: { status: TaskStatus; notes: string }) => Promise<SyncResult>;
@@ -32,35 +33,38 @@ type TaskSyncContextType = {
 const TaskSyncContext = createContext<TaskSyncContextType | null>(null);
 
 export function TaskSyncProvider({ children }: { children: React.ReactNode }) {
-  const { operatorEmail } = useAuth();
+  const { session, operator } = useAuth();
   const [queue, setQueue] = useState<PendingUpdate[]>([]);
   const [lastResult, setLastResult] = useState<SyncResult>({ kind: 'idle' });
-  const [lastSentAt, setLastSentAt] = useState<Date | null>(null);
+  // Kept with the operator who sent it, so the next operator doesn't see it.
+  const [lastSent, setLastSent] = useState<{ at: Date; operatorId: number } | null>(null);
+  // Read at send time, so a retry timer always uses the current session.
+  const sessionRef = useRef(session);
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
 
   const sync = useCallback(async () => {
-    const result = await flushQueue();
+    const current = sessionRef.current;
+    const result = await flushQueue(current);
     setLastResult(result);
-    if (result.kind === 'sent') setLastSentAt(new Date());
+    if (result.kind === 'sent' && current) setLastSent({ at: new Date(), operatorId: current.operator.id });
     setQueue(await loadQueue());
     return result;
   }, []);
 
-  const pending = useMemo(() => queue.filter(u => !u.failedReason), [queue]);
-  const failed = useMemo(() => queue.filter(u => u.failedReason), [queue]);
+  // Other operators' queued updates on this phone wait for their own sign-in.
+  const operatorId = operator?.id;
+  const mine = useMemo(() => queue.filter(u => belongsTo(u, operatorId)), [queue, operatorId]);
+  const pending = useMemo(() => mine.filter(u => !u.failedReason), [mine]);
+  const failed = useMemo(() => mine.filter(u => u.failedReason), [mine]);
+  const lastSentAt = lastSent && lastSent.operatorId === operatorId ? lastSent.at : null;
 
-  // Send anything left over from a previous session when the app starts.
+  // Send anything left over when the app starts or an operator signs in.
+  const sessionToken = session?.token;
   useEffect(() => {
-    let cancelled = false;
-    flushQueue().then(async result => {
-      if (cancelled) return;
-      setLastResult(result);
-      if (result.kind === 'sent') setLastSentAt(new Date());
-      setQueue(await loadQueue());
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (sessionToken) sync();
+  }, [sessionToken, sync]);
 
   // Send as soon as the phone comes back online.
   useEffect(() => {
@@ -80,11 +84,16 @@ export function TaskSyncProvider({ children }: { children: React.ReactNode }) {
 
   const submitUpdate = useCallback(
     async ({ status, notes }: { status: TaskStatus; notes: string }) => {
-      await enqueueUpdate({ status, notes: notes.trim() || null, operatorEmail });
+      await enqueueUpdate({
+        status,
+        notes: notes.trim() || null,
+        operatorId: operator?.id,
+        operatorEmail: operator?.email ?? null,
+      });
       setQueue(await loadQueue());
       return sync();
     },
-    [operatorEmail, sync]
+    [operator, sync]
   );
 
   const dismissFailed = useCallback(async () => {

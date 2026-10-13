@@ -1,8 +1,13 @@
 # Task status updates → Supabase
 
 When an operator taps **UPDATE STATUS** (Explore → Task Status), the Troid
-Companion app inserts one row into a Supabase table. Your system reads that
-table, or is notified the moment a row arrives.
+Companion app sends the update to the TROID system's backend
+(`POST /api/companion/task-status/`, signed in as the operator). The backend
+inserts one row into a Supabase table, filling in `operator_email` from the
+operator's account, so an update can't be sent in someone else's name. Your
+system reads that table, or is notified the moment a row arrives.
+
+The app never talks to Supabase itself and holds no Supabase key.
 
 ## 1. Create the table
 
@@ -19,21 +24,22 @@ create table public.task_status_updates (
   received_at    timestamptz not null default now()  -- when Supabase stored it
 );
 
--- The app uses the public publishable/anon key (it acts as the "anon" role), so lock
--- the table down with Row Level Security:
--- the app may only insert. It cannot read, change, or delete anything.
+-- Row Level Security with no policies: the public (anon) key can do nothing.
+-- Only the TROID backend's secret key, which bypasses RLS, can read or insert.
 alter table public.task_status_updates enable row level security;
-
-create policy "Troid Companion can insert status updates"
-  on public.task_status_updates
-  for insert
-  to anon
-  with check (true);
 ```
 
-Your own system should read the table with a **secret key** (`sb_secret_...`, or
-the legacy service role key). Use it on your server only, never in an app; it
-bypasses these policies.
+**Upgrading from the earlier setup**, where the app inserted with the public key:
+remove that policy, or anyone holding the public key could still insert fake rows.
+
+```sql
+drop policy if exists "Troid Companion can insert status updates" on public.task_status_updates;
+```
+
+The TROID backend reads and writes the table with a **secret key**
+(`sb_secret_...`, or the legacy service role key), set on Render as
+`SUPABASE_URL` and `SUPABASE_SECRET_KEY`. Use it on servers only, never in an
+app; it bypasses RLS.
 
 ## 2. Get the updates into your system
 
@@ -124,16 +130,15 @@ Your endpoint should reply with a 2xx status quickly.
 
 ## 3. Configure the app
 
-Copy `.env.example` to `.env.local` and fill in values from Supabase → Project
-Settings → API Keys:
+Copy `.env.example` to `.env.local` and set the TROID backend's address:
 
 ```
-EXPO_PUBLIC_SUPABASE_URL=https://<project>.supabase.co
-EXPO_PUBLIC_SUPABASE_ANON_KEY=<publishable key, sb_publishable_...>
-EXPO_PUBLIC_SUPABASE_TASK_TABLE=task_status_updates
+EXPO_PUBLIC_TROID_API_BASE=https://troid-sys-22ps.onrender.com/api
 ```
 
-Restart `npx expo start` after changing these; they are baked in when the app is bundled.
+Restart `npx expo start` after changing it; it is baked in when the app is bundled.
+The Supabase settings live only on the backend (`SUPABASE_URL`,
+`SUPABASE_SECRET_KEY` on Render).
 
 ## How delivery works
 
@@ -142,14 +147,17 @@ Restart `npx expo start` after changing these; they are baked in when the app is
   and is sent automatically when the phone is back online, when the app next
   starts, or every 30 seconds while anything is waiting. Updates are sent in
   the order they were made.
+- Each queued update remembers which operator made it and is only sent while
+  that operator is signed in. If an operator logs out with unsent updates, they
+  wait on the phone until that operator logs in again.
 - Each update has a unique `id` (the primary key). If a retry repeats an update
-  that already arrived, Postgres rejects it as a duplicate and the app counts it
-  as delivered, so a dropped connection never creates a second row. This works
-  with the insert-only policy above; the app never needs permission to read the table.
-- If Supabase rejects an update for good (for example, a value breaks a table
-  constraint), the operator sees the reason and it is not retried.
-- If the key, table, or insert policy is wrong, nothing is lost: updates stay
-  queued and are sent once the setup is fixed.
+  that already arrived, Postgres rejects it as a duplicate and the backend counts
+  it as delivered, so a dropped connection never creates a second row.
+- If the backend rejects an update for good (for example, notes over 2000
+  characters), the operator sees the reason and it is not retried.
+- If Supabase is down or misconfigured on the backend, or the operator's session
+  has ended, nothing is lost: updates stay queued and are sent once that is fixed
+  or the operator signs in again.
 
 Example row:
 

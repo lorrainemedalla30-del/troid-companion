@@ -15,6 +15,8 @@ type AuthContextType = {
   /** True while the saved session is being loaded at startup. */
   isRestoring: boolean;
   isAuthenticated: boolean;
+  /** The app's TROID session; used to send task status updates. */
+  session: CompanionSession | null;
   operator: Operator | null;
   /** Email the operator logged in with; attached to task status updates. */
   operatorEmail: string | null;
@@ -132,6 +134,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     () => ({
       isRestoring,
       isAuthenticated: session !== null,
+      session,
       operator: session?.operator ?? null,
       operatorEmail: session?.operator.email ?? null,
       mustChangePassword: session?.operator.mustChangePassword ?? false,

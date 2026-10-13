@@ -1,16 +1,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { ApiError, isApiConfigured, submitTaskStatus, type CompanionSession } from '@/utils/troid-api';
 
 /**
- * Sends task status updates to Supabase, with an offline queue.
+ * Sends task status updates to the TROID system, with an offline queue.
  *
  * Every update is saved on the phone first, then sent in order. If the phone is
- * offline or Supabase is unreachable, it stays queued and is retried later, so
- * nothing is lost. Each update carries a client-generated UUID as its primary
- * key, so a retry after a lost response is rejected as a duplicate (and counted
- * as delivered) instead of creating a second row.
+ * offline or the server is unreachable, it stays queued and is retried later, so
+ * nothing is lost. Each update carries a client-generated UUID, so a retry after
+ * a lost response is counted as delivered instead of creating a second row.
  *
- * Uses Supabase's REST API (PostgREST) directly, so no Supabase SDK is needed.
- * Table schema and setup: docs/task-status-sync.md.
+ * The TROID backend stores the update in Supabase under the signed-in operator
+ * (POST /api/companion/task-status/), so updates can't be sent in someone else's
+ * name. Each queued update is only sent with the session of the operator who
+ * made it. Table schema and setup: docs/task-status-sync.md.
  */
 
 export type TaskStatus = 'completed' | 'to_be_continued' | 'in_progress';
@@ -19,30 +21,26 @@ export type PendingUpdate = {
   id: string;
   status: TaskStatus;
   notes: string | null;
+  /** TROID account id of the operator who made the update (missing on updates queued by older versions). */
+  operatorId?: number;
   operatorEmail: string | null;
   /** When the operator tapped UPDATE STATUS (phone clock), ISO 8601. */
   createdAt: string;
-  /** Set when Supabase rejected this update for good (e.g. invalid data); it is no longer retried. */
+  /** Set when the server rejected this update for good (e.g. invalid data); it is no longer retried. */
   failedReason?: string;
 };
 
 export type SyncResult =
   | { kind: 'idle' }
   | { kind: 'sent'; count: number }
-  /** Could not reach Supabase; queued updates will be retried. */
+  /** Could not reach the server; queued updates will be retried. */
   | { kind: 'offline' }
-  /** Supabase refused the request because of setup (key, table, permissions). */
+  /** The server refused because of setup or the session (signed out, not configured). */
   | { kind: 'config-error'; message: string };
 
 const STORAGE_KEY = 'taskStatusQueue.v1';
-const REQUEST_TIMEOUT_MS = 15000;
 
-const SUPABASE_URL = (process.env.EXPO_PUBLIC_SUPABASE_URL ?? '').replace(/\/+$/, '');
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
-const TABLE = process.env.EXPO_PUBLIC_SUPABASE_TASK_TABLE || 'task_status_updates';
-
-// http:// is allowed for a local Supabase (`supabase start` serves http://127.0.0.1:54321).
-export const isSyncConfigured = /^https?:\/\//.test(SUPABASE_URL) && SUPABASE_ANON_KEY.length > 0;
+export const isSyncConfigured = isApiConfigured;
 
 /** RFC 4122 version 4 UUID (Hermes has no crypto.randomUUID). */
 function uuidv4() {
@@ -83,92 +81,58 @@ export function enqueueUpdate(update: Omit<PendingUpdate, 'id' | 'createdAt'>): 
   return withQueue(async queue => ({ queue: [...queue, item], result: item }));
 }
 
-/** Removes updates Supabase permanently rejected, after the operator has seen them. */
+/** Removes updates the server permanently rejected, after the operator has seen them. */
 export function clearFailed(): Promise<void> {
   return withQueue(async queue => ({ queue: queue.filter(u => !u.failedReason), result: undefined }));
 }
 
-type SendOutcome = 'sent' | 'retry' | { config: string } | { rejected: string };
-
-async function sendOne(update: PendingUpdate): Promise<SendOutcome> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    // A plain insert. (An upsert with "ignore duplicates" would need a SELECT
-    // policy on the table, which would let anyone with the public key read
-    // every update; insert-only is safer.)
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/${encodeURIComponent(TABLE)}`, {
-      method: 'POST',
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-        'Content-Type': 'application/json',
-        Prefer: 'return=minimal',
-      },
-      body: JSON.stringify({
-        id: update.id,
-        status: update.status,
-        notes: update.notes,
-        operator_email: update.operatorEmail,
-        created_at: update.createdAt,
-      }),
-      signal: controller.signal,
-    });
-
-    if (response.ok) return 'sent';
-    const error = await readError(response);
-    // 23505 = unique violation on the id: an earlier attempt already stored this
-    // update (its response was lost), so it counts as delivered, not a duplicate.
-    if (response.status === 409 && error.code === '23505') return 'sent';
-    const detail = error.text;
-    if (response.status === 401 || response.status === 403) {
-      return { config: `Supabase refused the update (${response.status}). Check the anon key and the table's insert policy. ${detail}` };
-    }
-    if (response.status === 404) {
-      return { config: `Table "${TABLE}" was not found in Supabase. ${detail}` };
-    }
-    if (response.status === 408 || response.status === 429 || response.status >= 500) return 'retry';
-    // Other 4xx: Supabase rejected this particular update (e.g. a column or check constraint).
-    return { rejected: `${response.status}: ${detail}` };
-  } catch {
-    return 'retry'; // Network error or timeout.
-  } finally {
-    clearTimeout(timer);
-  }
+/** Whether this queued update may be sent with this operator's session. */
+export function belongsTo(update: PendingUpdate, operatorId: number | undefined) {
+  return update.operatorId === undefined || update.operatorId === operatorId;
 }
 
-async function readError(response: Response): Promise<{ code: string | null; text: string }> {
+type SendOutcome = 'sent' | 'retry' | { config: string } | { rejected: string };
+
+async function sendOne(session: CompanionSession, update: PendingUpdate): Promise<SendOutcome> {
   try {
-    const body = await response.json();
-    return { code: body.code ?? null, text: [body.message, body.hint].filter(Boolean).join(' ') };
-  } catch {
-    return { code: null, text: '' };
+    await submitTaskStatus(session, update);
+    return 'sent';
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.kind === 'network') return 'retry';
+    // Signed out, or the account can no longer use the app; sent after signing in again.
+    if (error.kind === 'auth') return { config: `Sign in again to send it. ${error.message}` };
+    if (error.status === 400) return { rejected: error.message };
+    return 'retry'; // Server or Supabase trouble; try again later.
   }
 }
 
 let flushing: Promise<SyncResult> | null = null;
 
-/** Sends queued updates in order. Safe to call often; concurrent calls share one run. */
-export function flushQueue(): Promise<SyncResult> {
+/**
+ * Sends the signed-in operator's queued updates in order. Safe to call often;
+ * concurrent calls share one run. Other operators' updates wait for their sign-in.
+ */
+export function flushQueue(session: CompanionSession | null): Promise<SyncResult> {
   if (!isSyncConfigured) {
-    return Promise.resolve({ kind: 'config-error', message: 'Supabase is not configured yet (missing URL or anon key).' });
+    return Promise.resolve({ kind: 'config-error', message: 'The TROID server address is not set yet.' });
   }
+  if (!session) return Promise.resolve({ kind: 'idle' });
   if (!flushing) {
-    flushing = runFlush().finally(() => {
+    flushing = runFlush(session).finally(() => {
       flushing = null;
     });
   }
   return flushing;
 }
 
-async function runFlush(): Promise<SyncResult> {
+async function runFlush(session: CompanionSession): Promise<SyncResult> {
   let sent = 0;
   // Re-read the queue each round so updates added mid-flush are picked up too.
   for (;;) {
-    const next = (await loadQueue()).find(u => !u.failedReason);
+    const next = (await loadQueue()).find(u => !u.failedReason && belongsTo(u, session.operator.id));
     if (!next) return sent > 0 ? { kind: 'sent', count: sent } : { kind: 'idle' };
 
-    const outcome = await sendOne(next);
+    const outcome = await sendOne(session, next);
     if (outcome === 'retry') return { kind: 'offline' };
     if (typeof outcome === 'object' && 'config' in outcome) return { kind: 'config-error', message: outcome.config };
 

@@ -92,7 +92,12 @@ export default function AquaBotDashboard() {
   };
 
   const handleLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
+    const unsent = taskSync.pending.length;
+    const message =
+      unsent > 0
+        ? `${unsent} status update${unsent === 1 ? ' has' : 's have'} not been sent yet. ${unsent === 1 ? 'It stays' : 'They stay'} on this phone and will be sent the next time you log in. Logout anyway?`
+        : 'Are you sure you want to logout?';
+    Alert.alert('Logout', message, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Yes',

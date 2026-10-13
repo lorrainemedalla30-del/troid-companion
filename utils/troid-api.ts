@@ -8,6 +8,8 @@
  */
 
 const API_BASE = (process.env.EXPO_PUBLIC_TROID_API_BASE ?? '').replace(/\/+$/, '');
+/** True when the TROID server address is set. */
+export const isApiConfigured = /^https?:\/\//.test(API_BASE);
 // Render's free tier sleeps when idle and can take about a minute to wake up.
 const REQUEST_TIMEOUT_MS = 60000;
 
@@ -29,10 +31,13 @@ export type CompanionSession = { operator: Operator; token: string };
  */
 export class ApiError extends Error {
   kind: 'auth' | 'network' | 'server';
+  /** HTTP status, when the server answered. */
+  status?: number;
 
-  constructor(message: string, kind: ApiError['kind']) {
+  constructor(message: string, kind: ApiError['kind'], status?: number) {
     super(message);
     this.kind = kind;
+    this.status = status;
   }
 }
 
@@ -58,7 +63,7 @@ async function request<T>(
   path: string,
   { method = 'GET', body, session }: { method?: string; body?: object; session?: CompanionSession } = {}
 ): Promise<T> {
-  if (!/^https?:\/\//.test(API_BASE)) {
+  if (!isApiConfigured) {
     throw new ApiError('The TROID server address is not set (EXPO_PUBLIC_TROID_API_BASE).', 'server');
   }
 
@@ -97,12 +102,16 @@ async function request<T>(
     // Not JSON (e.g. a proxy error page); fall back to the messages below.
   }
   if (response.status === 429) {
-    throw new ApiError('Too many sign-in attempts. Wait a minute and try again.', 'auth');
+    throw new ApiError('Too many sign-in attempts. Wait a minute and try again.', 'auth', 429);
   }
   if (response.status === 401 || response.status === 403) {
-    throw new ApiError(message || 'Please sign in again.', 'auth');
+    throw new ApiError(message || 'Please sign in again.', 'auth', response.status);
   }
-  throw new ApiError(message || `The TROID server had a problem (${response.status}). Try again.`, 'server');
+  throw new ApiError(
+    message || `The TROID server had a problem (${response.status}). Try again.`,
+    'server',
+    response.status
+  );
 }
 
 export async function companionLogin(email: string, password: string): Promise<CompanionSession> {
@@ -133,6 +142,21 @@ export async function changePassword(
 
 export async function companionLogout(session: CompanionSession): Promise<void> {
   await request<null>('/companion/logout/', { method: 'POST', session });
+}
+
+/**
+ * Sends a task status update. The server records it under the signed-in
+ * operator, so the update can't be sent in someone else's name.
+ */
+export async function submitTaskStatus(
+  session: CompanionSession,
+  update: { id: string; status: string; notes: string | null; createdAt: string }
+): Promise<void> {
+  await request<{ id: string }>('/companion/task-status/', {
+    method: 'POST',
+    body: { id: update.id, status: update.status, notes: update.notes, created_at: update.createdAt },
+    session,
+  });
 }
 
 /** The TROID system's password rules (backend validate_password_strength). */
