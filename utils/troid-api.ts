@@ -159,6 +159,45 @@ export async function submitTaskStatus(
   });
 }
 
+/** The robot assigned to the operator, with its condition from the robot's heartbeats. */
+export type AssignedBot = {
+  id: number;
+  /** As the website shows it, e.g. "TRD-004". */
+  label: string;
+  name: string;
+  /** The robot sent a heartbeat in the last ~15 s. */
+  isOnline: boolean;
+  isActive: boolean;
+  /** Percent; null until the robot has a battery sensor. */
+  battery: number | null;
+  lastSeen: string | null;
+};
+
+type ApiBot = {
+  id: number;
+  label: string;
+  name: string;
+  is_online: boolean;
+  is_active: boolean;
+  battery_level: number | null;
+  last_seen: string | null;
+};
+
+/** Null when no robot is assigned to the operator (Operator Management on the website). */
+export async function fetchAssignedBot(session: CompanionSession): Promise<AssignedBot | null> {
+  const { bot } = await request<{ bot: ApiBot | null }>('/companion/bot/', { session });
+  if (!bot) return null;
+  return {
+    id: bot.id,
+    label: bot.label,
+    name: bot.name,
+    isOnline: bot.is_online,
+    isActive: bot.is_active,
+    battery: bot.battery_level,
+    lastSeen: bot.last_seen,
+  };
+}
+
 /** The TROID system's password rules (backend validate_password_strength). */
 export const PASSWORD_RULES: { label: string; test: (password: string) => boolean }[] = [
   { label: 'At least 8 characters', test: p => p.length >= 8 },

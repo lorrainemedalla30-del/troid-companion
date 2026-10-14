@@ -1,5 +1,6 @@
 import NetworkConnectionModal from '@/components/NetworkConnectionModal';
 import VideoFeed from '@/components/VideoFeed';
+import { useAssignedBot } from '@/hooks/use-assigned-bot';
 import { useConnectionQuality, type SignalBars } from '@/hooks/use-connection-quality';
 import { useDriveLink, type DriveDirection } from '@/hooks/use-drive-link';
 import { fontScale, scaleSize } from '@/utils/scale';
@@ -34,15 +35,6 @@ const f = fontScale;
 
 const DRIVE_PAD_GAP = s(8);
 
-type TelemetryReadings = {
-  battery: number | null;
-};
-
-// No data source is connected yet, so every reading shows "--".
-const NO_TELEMETRY: TelemetryReadings = {
-  battery: null,
-};
-
 /** Formats a telemetry value, or "--" if there is no reading. */
 const fmt = (value: number | null, digits: number) => (value == null ? '--' : value.toFixed(digits));
 
@@ -62,8 +54,11 @@ export default function ROVControlUI() {
   const networkState = Network.useNetworkState();
   const isConnected = networkState.isConnected === true && networkState.isInternetReachable !== false;
   const quality = useConnectionQuality(isConnected, networkState.type === Network.NetworkStateType.WIFI);
-  const telemetry = NO_TELEMETRY;
-  const battery = telemetry.battery;
+  // The operator's robot, as the TROID system last heard from it (its heartbeats).
+  const bot = useAssignedBot();
+  const battery = bot?.battery ?? null;
+  const botLabel = bot === undefined ? '…' : bot === null ? 'NO ROBOT' : bot.label;
+  const botColor = bot ? (bot.isOnline ? COLORS.emerald400 : COLORS.red500) : 'rgba(255,255,255,0.5)';
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -188,7 +183,11 @@ export default function ROVControlUI() {
               </Pressable>
               {isConnected ? (
                 <>
-                  <StatusPill><Radio size={s(16)} color="rgba(255,255,255,0.8)" /></StatusPill>
+                  {/* Assigned robot: green while it is sending heartbeats, red when offline. */}
+                  <StatusPill>
+                    <Radio size={s(16)} color={botColor} />
+                    <Text style={[styles.whiteText, { color: botColor }]}>{botLabel}</Text>
+                  </StatusPill>
                   <StatusPill>
                     <Battery size={s(16)} color={batteryLow ? COLORS.red500 : 'rgba(255,255,255,0.8)'} />
                     <Text style={[styles.whiteText, { color: batteryLow ? COLORS.red500 : COLORS.white }]}>{fmt(battery, 0)}%</Text>
