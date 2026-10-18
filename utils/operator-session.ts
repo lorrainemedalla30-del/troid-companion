@@ -4,9 +4,10 @@ import { Platform } from 'react-native';
 import type { CompanionSession } from '@/utils/troid-api';
 
 /**
- * Keeps the operator signed in across app restarts. On phones the session is in
- * SecureStore (the iOS Keychain / Android Keystore). SecureStore has no web
- * version, so the web build (development only) uses AsyncStorage.
+ * Earlier versions kept the operator's session on the phone (SecureStore, the
+ * iOS Keychain / Android Keystore; AsyncStorage on web) so they stayed signed in
+ * across restarts. The app now signs in every time it opens; these helpers find
+ * and remove such a leftover session at startup.
  */
 
 const KEY = 'operatorSession.v1';
@@ -18,12 +19,6 @@ export async function loadSession(): Promise<CompanionSession | null> {
   } catch {
     return null;
   }
-}
-
-export async function saveSession(session: CompanionSession): Promise<void> {
-  const raw = JSON.stringify(session);
-  if (Platform.OS === 'web') await AsyncStorage.setItem(KEY, raw);
-  else await SecureStore.setItemAsync(KEY, raw);
 }
 
 export async function clearSession(): Promise<void> {

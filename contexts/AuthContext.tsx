@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
-import { clearSession, loadSession, saveSession } from '@/utils/operator-session';
+import { clearSession, loadSession } from '@/utils/operator-session';
 import {
   ApiError,
   changePassword as apiChangePassword,
@@ -12,7 +12,7 @@ import {
 } from '@/utils/troid-api';
 
 type AuthContextType = {
-  /** True while the saved session is being loaded at startup. */
+  /** True at startup while a session left by an earlier version is being cleared. */
   isRestoring: boolean;
   isAuthenticated: boolean;
   /** The app's TROID session; used to send task status updates. */
@@ -44,11 +44,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Held in memory only, so the operator isn't asked for it again on the change-password screen.
   const temporaryPasswordRef = useRef<string | null>(null);
 
+  // The session lives in memory only: every time the app is opened, the operator
+  // signs in again, so the login page is always the first thing anyone sees.
   const applySession = useCallback(async (next: CompanionSession | null) => {
     sessionRef.current = next;
     setSession(next);
-    if (next) await saveSession(next);
-    else await clearSession();
   }, []);
 
   const endSession = useCallback(
@@ -77,19 +77,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [applySession, endSession]);
 
+  // Earlier versions kept the session on the phone across restarts; end any such
+  // leftover session (here and on the server) so the app starts at the login page.
   useEffect(() => {
     let cancelled = false;
-    loadSession().then(saved => {
-      if (cancelled) return;
-      sessionRef.current = saved;
-      setSession(saved);
-      setIsRestoring(false);
-      verify();
+    loadSession().then(async saved => {
+      if (saved) {
+        await clearSession();
+        companionLogout(saved).catch(() => {});
+      }
+      if (!cancelled) setIsRestoring(false);
     });
     return () => {
       cancelled = true;
     };
-  }, [verify]);
+  }, []);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', state => {
