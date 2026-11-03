@@ -12,7 +12,7 @@ import { TaskSyncProvider } from '@/contexts/TaskSyncContext';
 SplashScreen.preventAutoHideAsync();
 
 function RootLayoutNav() {
-  const { isRestoring, isAuthenticated, mustChangePassword } = useAuth();
+  const { isRestoring, isWelcomingBack, isAuthenticated, mustChangePassword } = useAuth();
 
   useEffect(() => {
     if (!isRestoring) SplashScreen.hide();
@@ -20,18 +20,23 @@ function RootLayoutNav() {
 
   // Only the screens whose guard passes exist, so the controllers can never show
   // before sign-in: signed out (and while the saved session loads), the login page
-  // is the only screen. Signing in or out switches screens automatically.
+  // is the only screen. Signing in or out switches screens automatically. When a
+  // saved session is restored at startup, the welcome-back screen comes first.
   return (
     <Stack>
       <Stack.Protected guard={!isAuthenticated}>
         <Stack.Screen name="loginpage" options={{ headerShown: false }} />
       </Stack.Protected>
 
-      <Stack.Protected guard={isAuthenticated && mustChangePassword}>
+      <Stack.Protected guard={isAuthenticated && isWelcomingBack}>
+        <Stack.Screen name="welcome-back" options={{ headerShown: false, animation: 'fade' }} />
+      </Stack.Protected>
+
+      <Stack.Protected guard={isAuthenticated && !isWelcomingBack && mustChangePassword}>
         <Stack.Screen name="change-password" options={{ headerShown: false }} />
       </Stack.Protected>
 
-      <Stack.Protected guard={isAuthenticated && !mustChangePassword}>
+      <Stack.Protected guard={isAuthenticated && !isWelcomingBack && !mustChangePassword}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
       </Stack.Protected>

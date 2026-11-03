@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
-import { clearSession, loadSession } from '@/utils/operator-session';
+import { clearSession, loadSession, saveSession } from '@/utils/operator-session';
 import {
   ApiError,
   changePassword as apiChangePassword,
@@ -11,9 +11,18 @@ import {
   type Operator,
 } from '@/utils/troid-api';
 
+/** The welcome-back screen stays up at least this long, so it doesn't just flash. */
+const WELCOME_MIN_MS = 1500;
+/** Longest the welcome-back screen waits for the server (which may be asleep or unreachable offline). */
+const WELCOME_MAX_MS = 5000;
+
+const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
 type AuthContextType = {
-  /** True at startup while a session left by an earlier version is being cleared. */
+  /** True while the saved session is being loaded at startup. */
   isRestoring: boolean;
+  /** True while the welcome-back screen shows after a saved session was restored at startup. */
+  isWelcomingBack: boolean;
   isAuthenticated: boolean;
   /** The app's TROID session; used to send task status updates. */
   session: CompanionSession | null;
@@ -38,23 +47,27 @@ const AuthContext = createContext<AuthContextType | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<CompanionSession | null>(null);
   const [isRestoring, setIsRestoring] = useState(true);
+  const [isWelcomingBack, setIsWelcomingBack] = useState(false);
   const [signOutNotice, setSignOutNotice] = useState<string | null>(null);
   const [hasTemporaryPassword, setHasTemporaryPassword] = useState(false);
   const sessionRef = useRef<CompanionSession | null>(null);
   // Held in memory only, so the operator isn't asked for it again on the change-password screen.
   const temporaryPasswordRef = useRef<string | null>(null);
 
-  // The session lives in memory only: every time the app is opened, the operator
-  // signs in again, so the login page is always the first thing anyone sees.
+  // The session is saved on the phone, so reopening the app signs the operator
+  // back in without the server; this works offline too.
   const applySession = useCallback(async (next: CompanionSession | null) => {
     sessionRef.current = next;
     setSession(next);
+    if (next) await saveSession(next);
+    else await clearSession();
   }, []);
 
   const endSession = useCallback(
     async (notice: string | null) => {
       temporaryPasswordRef.current = null;
       setHasTemporaryPassword(false);
+      setIsWelcomingBack(false);
       setSignOutNotice(notice);
       await applySession(null);
     },
@@ -77,21 +90,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [applySession, endSession]);
 
-  // Earlier versions kept the session on the phone across restarts; end any such
-  // leftover session (here and on the server) so the app starts at the login page.
+  // Restores the saved session and welcomes the operator back while the server
+  // re-checks it. If the server can't be reached in time, the app opens anyway
+  // and the check finishes in the background.
   useEffect(() => {
     let cancelled = false;
-    loadSession().then(async saved => {
+    loadSession().then(saved => {
+      if (cancelled) return;
       if (saved) {
-        await clearSession();
-        companionLogout(saved).catch(() => {});
+        sessionRef.current = saved;
+        setSession(saved);
+        setIsWelcomingBack(true);
+        Promise.all([wait(WELCOME_MIN_MS), Promise.race([verify(), wait(WELCOME_MAX_MS)])]).then(() => {
+          if (!cancelled) setIsWelcomingBack(false);
+        });
       }
-      if (!cancelled) setIsRestoring(false);
+      setIsRestoring(false);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [verify]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', state => {
@@ -129,12 +148,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await endSession(null);
     // Ends the session on the server too; if offline, it simply expires when the
     // operator next signs in (each sign-in replaces the previous app session).
+    // The copy on the phone is removed either way.
     if (current) companionLogout(current).catch(() => {});
   }, [endSession]);
 
   const value = useMemo(
     () => ({
       isRestoring,
+      isWelcomingBack,
       isAuthenticated: session !== null,
       session,
       operator: session?.operator ?? null,
@@ -146,7 +167,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       changePassword,
       logout,
     }),
-    [isRestoring, session, hasTemporaryPassword, signOutNotice, login, changePassword, logout]
+    [isRestoring, isWelcomingBack, session, hasTemporaryPassword, signOutNotice, login, changePassword, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

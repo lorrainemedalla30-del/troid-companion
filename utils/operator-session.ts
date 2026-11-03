@@ -4,10 +4,9 @@ import { Platform } from 'react-native';
 import type { CompanionSession } from '@/utils/troid-api';
 
 /**
- * Earlier versions kept the operator's session on the phone (SecureStore, the
- * iOS Keychain / Android Keystore; AsyncStorage on web) so they stayed signed in
- * across restarts. The app now signs in every time it opens; these helpers find
- * and remove such a leftover session at startup.
+ * Keeps the operator's session on the phone (SecureStore, the iOS Keychain /
+ * Android Keystore; AsyncStorage on web) so the phone stays signed in across
+ * restarts, even where there is no internet (e.g. on the bot's hotspot).
  */
 
 const KEY = 'operatorSession.v1';
@@ -18,6 +17,16 @@ export async function loadSession(): Promise<CompanionSession | null> {
     return raw ? (JSON.parse(raw) as CompanionSession) : null;
   } catch {
     return null;
+  }
+}
+
+export async function saveSession(session: CompanionSession): Promise<void> {
+  const raw = JSON.stringify(session);
+  try {
+    if (Platform.OS === 'web') await AsyncStorage.setItem(KEY, raw);
+    else await SecureStore.setItemAsync(KEY, raw);
+  } catch {
+    // Storage unavailable: the operator stays signed in until the app closes.
   }
 }
 
