@@ -22,7 +22,7 @@ export default function VideoFeed({ style }: { style?: StyleProp<ViewStyle> }) {
   // The query string stops the WebView reusing a cached, dead stream on reconnect.
   const src = `${ROV_VIDEO_URL}?t=${attempt}`;
   const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}img{width:100%;height:100%;object-fit:cover}</style>
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}img{width:100%;height:100%;object-fit:contain}</style>
 </head><body><img src="${src}"></body></html>`;
 
   return (

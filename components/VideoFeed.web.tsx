@@ -19,7 +19,7 @@ export default function VideoFeed({ style }: { style?: StyleProp<ViewStyle> }) {
         key={attempt}
         src={`${ROV_VIDEO_URL}?t=${attempt}`}
         alt="ROV camera"
-        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+        style={{ width: '100%', height: '100%', objectFit: 'contain' }}
       />
     </View>
   );

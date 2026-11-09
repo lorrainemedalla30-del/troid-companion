@@ -22,7 +22,7 @@ const SECTIONS: Section[] = [
     items: [
       { lead: 'Log in', text: 'with your operator email and password on the login screen.' },
       { lead: 'Rotate freely', text: 'the app works in both portrait and landscape. Landscape gives the most room for the controls.' },
-      { lead: 'Navigate', text: 'with the bar at the bottom: Home opens the ROV control screen, Explore opens this dashboard.' },
+      { lead: 'Navigate', text: 'with the bar at the bottom: Requests lists your assigned cleanups, Controls opens the ROV control screen, and Explore opens this dashboard.' },
     ],
   },
   {

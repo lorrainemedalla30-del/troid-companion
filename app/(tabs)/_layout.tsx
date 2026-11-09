@@ -8,6 +8,8 @@ import { Ionicons } from '@expo/vector-icons';
 const TabIcon = ({ name, color }: { name: string; color: ColorValue }) => {
   const iconMap: Record<string, any> = {
     'house.fill': 'home',
+    'list.bullet': 'list',
+    'gamecontroller.fill': 'game-controller',
     'paperplane.fill': 'paper-plane',
   };
   return <Ionicons name={iconMap[name] || 'home'} size={22} color={color} />;
@@ -37,8 +39,15 @@ export default function TabLayout() {
         <Tabs.Screen
           name="index"
           options={{
-            title: 'Home',
-            tabBarIcon: ({ color }) => <TabIcon name="house.fill" color={color} />,
+            title: 'Requests',
+            tabBarIcon: ({ color }) => <TabIcon name="list.bullet" color={color} />,
+          }}
+        />
+        <Tabs.Screen
+          name="controls"
+          options={{
+            title: 'Controls',
+            tabBarIcon: ({ color }) => <TabIcon name="gamecontroller.fill" color={color} />,
           }}
         />
         <Tabs.Screen

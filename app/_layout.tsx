@@ -38,6 +38,7 @@ function RootLayoutNav() {
 
       <Stack.Protected guard={isAuthenticated && !isWelcomingBack && !mustChangePassword}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="request/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
       </Stack.Protected>
     </Stack>

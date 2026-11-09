@@ -159,6 +159,81 @@ export async function submitTaskStatus(
   });
 }
 
+/** A cleanup assigned to this operator and their robot. */
+export type DriveRequest = {
+  id: string;
+  type: string;
+  status: 'approved' | 'ongoing';
+  requestedBy: string;
+  barangay: string;
+  locationName: string;
+  municipality: string;
+  province: string;
+  /** "2026-11-20" */
+  scheduleDay: string | null;
+  /** "06:00" */
+  scheduleTime: string | null;
+  zone: string;
+  notes: string;
+  letterFileName: string;
+  /** When the operator started the drive, ISO 8601; null until then. */
+  driveStartedAt: string | null;
+};
+
+type ApiDriveRequest = {
+  request_id: string;
+  request_type: string;
+  status: DriveRequest['status'];
+  requested_by_name: string;
+  barangay: string;
+  location_name: string;
+  municipality: string;
+  province: string;
+  schedule_day: string | null;
+  schedule_time: string | null;
+  zone: string;
+  notes: string;
+  letter_file_name: string;
+  drive_started_at: string | null;
+};
+
+function toDriveRequest(data: ApiDriveRequest): DriveRequest {
+  return {
+    id: data.request_id,
+    type: data.request_type,
+    status: data.status,
+    requestedBy: data.requested_by_name,
+    barangay: data.barangay,
+    locationName: data.location_name,
+    municipality: data.municipality,
+    province: data.province,
+    scheduleDay: data.schedule_day,
+    scheduleTime: data.schedule_time,
+    zone: data.zone,
+    notes: data.notes,
+    letterFileName: data.letter_file_name,
+    driveStartedAt: data.drive_started_at,
+  };
+}
+
+export async function fetchAssignedRequests(session: CompanionSession): Promise<DriveRequest[]> {
+  const { requests } = await request<{ requests: ApiDriveRequest[] }>('/companion/requests/', { session });
+  return requests.map(toDriveRequest);
+}
+
+export async function fetchAssignedRequest(session: CompanionSession, id: string): Promise<DriveRequest> {
+  return toDriveRequest(await request<ApiDriveRequest>(`/companion/requests/${encodeURIComponent(id)}/`, { session }));
+}
+
+/** Logs the start time on the server and marks the request Ongoing. */
+export async function startCleanupDrive(session: CompanionSession, id: string): Promise<DriveRequest> {
+  const data = await request<ApiDriveRequest>(`/companion/requests/${encodeURIComponent(id)}/start/`, {
+    method: 'POST',
+    session,
+  });
+  return toDriveRequest(data);
+}
+
 /** The robot assigned to the operator, with its condition from the robot's heartbeats. */
 export type AssignedBot = {
   id: number;

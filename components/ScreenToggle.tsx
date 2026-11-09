@@ -51,7 +51,7 @@ export default function ScreenToggle() {
   }));
 
   const done = () => setAnimating(false);
-  const goTo = (path: '/' | '/explore') => router.navigate(path);
+  const goTo = (path: '/controls' | '/explore') => router.navigate(path);
 
   const openExplore = () => {
     progress.set(0);
@@ -69,7 +69,7 @@ export default function ScreenToggle() {
   const backToControls = () => {
     progress.set(1);
     opacity.set(1);
-    goTo('/');
+    goTo('/controls');
     progress.set(withDelay(SETTLE_MS, withTiming(0, { duration: GROW_MS, easing: Easing.in(Easing.cubic) }, () => {
       opacity.set(0);
       scheduleOnRN(done);
